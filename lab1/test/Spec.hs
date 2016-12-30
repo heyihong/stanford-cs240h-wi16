@@ -27,9 +27,25 @@ main = hspec $ describe "Testing tr" $ do
       it "a -> b" $
         tr' "a" "b" "aaaa" `shouldBe` "bbbb"
 
+    describe "truncate translate" $
+      it "aa -> b" $
+        tr' "aa" "b" "aaaa" `shouldBe` "bbbb"  
+
     describe "extend input set" $
       it "abc -> d" $
         tr' "abc" "d" "abcd" `shouldBe` "dddd"
+
+    describe "next character" $
+      it "abcd -> bcde" $
+        tr' "abcd" "bcde" "dcba" `shouldBe` "edcb"
+
+    describe "one argument" $ 
+      it "abcd" $
+        tr "abcd" Nothing "abcde" `shouldBe` "e"
+
+    describe "delete mode" $
+      it "-d abcd" $
+        tr' "-d" "abcd" "abcde" `shouldBe` "e"
 
     describe "tr quick-check" $
       it "empty input is identity" $ property prop_empty_id

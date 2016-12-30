@@ -9,6 +9,9 @@ module Tr
     , tr
     ) where
 
+import qualified Data.Map as Map
+import qualified Data.Set as Set
+
 -- | Just to give `tr` a more descriptive type
 type CharSet = String
 
@@ -31,5 +34,18 @@ type CharSet = String
 -- It's up to you how to handle the first argument being the empty string, or
 -- the second argument being `Just ""`, we will not be testing this edge case.
 tr :: CharSet -> Maybe CharSet -> String -> String
-tr _inset _outset xs = xs
+tr "-d" Nothing xs = xs
+tr "-d" (Just _inset) xs = 
+    let 
+        s = Set.fromList _inset
+    in 
+        filter (\x -> not (Set.member x s)) xs
+tr _inset (Just _outset) xs = 
+    let 
+        m = Map.fromList (zip _inset (concat (repeat _outset))) 
+    in 
+        map (\c -> Map.findWithDefault c c m) xs
+tr _inset Nothing xs = tr "-d" (Just _inset) xs
+
+
 
