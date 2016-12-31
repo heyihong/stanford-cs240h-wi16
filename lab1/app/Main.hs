@@ -4,22 +4,25 @@
 -- much about compatibility of argument parsing.
 module Main where
 
-import Tr
+import Data.Maybe
+import Control.Monad
 import System.Environment
-import System.IO
+import System.Exit
 
-repl :: (String -> String) -> IO ()
-repl tr = do
-    end <- isEOF
-    if end 
-        then putStr ""
-        else do {line <- getLine; putStrLn $ tr line; repl tr}
+import Tr
+
+parseArgs :: [String] -> Maybe (CharSet, Maybe CharSet)
+parseArgs ["-d", set1] 
+    | not (null set1) = Just (set1, Nothing)
+parseArgs [set1, set2]
+    | not (null set1 || null set2) = Just (set1, Just set2)
+parseArgs _ = Nothing
 
 -- | Main - parse args, and read from stdin.
 main :: IO ()
 main = do
-    args <- getArgs	
-    case length args of
-        0 -> repl (tr "" Nothing)
-        1 -> repl (tr (args !! 0) Nothing)
-        _ -> repl (tr (args !! 0) (Just $ args !! 1))
+    args <- parseArgs <$> getArgs
+    when (isNothing args) $ do
+        putStrLn "Usage: tr [-d] charSet1 [charSet2]"
+        exitWith $ ExitFailure 1
+    interact $ uncurry tr $ fromJust args

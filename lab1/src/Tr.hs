@@ -34,18 +34,16 @@ type CharSet = String
 -- It's up to you how to handle the first argument being the empty string, or
 -- the second argument being `Just ""`, we will not be testing this edge case.
 tr :: CharSet -> Maybe CharSet -> String -> String
-tr "-d" Nothing xs = xs
-tr "-d" (Just _inset) xs = 
+tr _inset Nothing xs = 
     let 
         s = Set.fromList _inset
     in 
         filter (\x -> not (Set.member x s)) xs
 tr _inset (Just _outset) xs = 
     let 
-        m = Map.fromList (zip _inset (concat (repeat _outset))) 
+        m = Map.fromList (zip _inset (_outset ++ (repeat (last _outset)))) 
     in 
         map (\c -> Map.findWithDefault c c m) xs
-tr _inset Nothing xs = tr "-d" (Just _inset) xs
 
 
 
