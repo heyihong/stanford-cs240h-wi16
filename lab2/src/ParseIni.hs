@@ -1,3 +1,5 @@
+{-# LANGUAGE OverloadedStrings #-}
+
 module ParseIni
     ( INISectName (..)
     , INIKey
@@ -12,7 +14,12 @@ module ParseIni
     ) where
 
 import qualified Data.ByteString as B
+import qualified Data.ByteString.Char8 as C8
+import qualified Data.Char as C
 import qualified Data.Map.Strict as M
+import qualified Data.List as L
+import Data.Attoparsec.ByteString.Char8 as A
+import Control.Applicative
 
 
 -- **** TYPES ****
@@ -56,24 +63,25 @@ type INIFile = M.Map INISectName INISection
 -- appropriate @INISectName@. This function accounts for the case
 -- insensitivity of the section name.
 toSectName :: String -> Maybe String -> INISectName
-toSectName = undefined
+toSectName sect Nothing = ISect (C8.pack (map C.toLower sect))
+toSectName sect (Just subsect) = ISubsect (C8.pack (map C.toLower sect)) (C8.pack subsect)
 
 -- |Given a key name, return an appropriate @INIKey@. This function
 -- accounts for the case insensitivity of the key name.
 toKey :: String -> INIKey
-toKey = undefined
+toKey = C8.pack
 
 -- |Look up a section in an @INIFile@.
 lookupSection :: INISectName -> INIFile -> Maybe INISection
-lookupSection = undefined
+lookupSection = M.lookup
 
 -- |Look up a value in an @INISection@.
 lookupSValue :: INIKey -> INISection -> Maybe [INIVal]
-lookupSValue = undefined
+lookupSValue = M.lookup 
 
 -- |Look up a value in an @INIFile@.
 lookupValue :: INIKey -> INISectName -> INIFile -> Maybe [INIVal]
-lookupValue = undefined
+lookupValue k0 s0 f0 = lookupSection s0 f0 >>= \s1 -> lookupSValue k0 s1 
 
 
 -- **** PARSER ****
@@ -88,9 +96,59 @@ lookupValue = undefined
 -- Whitespace between and inside sections is ignored, as are comment lines, which
 -- begin with @#@ or @;@.
 parseIniFile :: B.ByteString -> Either String INIFile
-parseIniFile = const $ Right M.empty
+parseIniFile = parseOnly iniFile
 
 -- Your implementation goes here.
 --
 -- parseIniFile should return @Left errmsg@ on error,
 -- or @Right parsedResult@ on success.
+
+intSuffix :: M.Map Char Integer
+intSuffix = M.fromList [('k', 2^10), ('M', 2^20), ('G', 2^30), ('T', 2^40), ('P', 2^50), ('E', 2^60)]
+
+subsectEscape :: M.Map Char Char
+subsectEscape = M.fromList [('\\', '\\'), ('\"', '\"'), ('t', '\t'), ('b', '\b')]
+
+stringEscape :: M.Map Char Char
+stringEscape = M.union (M.fromList [('n', '\n')]) subsectEscape
+
+escapeChar mp = do
+    char '\\' 
+    c <- satisfy $ inClass (M.keys mp)
+    return $ M.findWithDefault c c mp
+
+iniSectName = (toSectName <$> ("[" *> skipSpace *> sect) <*> (option Nothing (Just <$> (skipSpace *> subsect)) <* skipSpace <* "]"))
+    where sect = map C.toLower <$> (many1 (digit <|> letter_ascii <|> char '.' <|> char '-'))
+          subsect = "\"" *> many1 ((satisfy $ notInClass "\n\"\\") <|> escapeChar subsectEscape) <* "\""
+
+iniKey = (toKey <$> ((:) <$> letter_ascii <*> (many (digit <|> letter_ascii <|> char '-'))))
+
+iniValue = toINIVal <$> stringListVal
+    where boolVal = readBool <$> (stringCI "true" <|> stringCI "false" <|> stringCI "on" <|> stringCI "off" <|> stringCI "yes" <|> stringCI "no")
+          readBool s = elem (map C.toLower (C8.unpack s)) ["true", "on", "yes"]
+          intVal = readInteger <$> ((,,) <$> option '+' (char '+' <|> char '-') <*> many1 digit <*> option ' ' (satisfy $ inClass "kMGTPE"))
+          readInteger (si, ds, su) = let num = (read ds) * (M.findWithDefault 1 su intSuffix) 
+                                     in if si == '+' then num else -num
+          stringListVal = (:) <$> unquotedStringVal <*> (concat <$> (many ((\x y->[x,y]) <$> quotedStringVal <*> unquotedStringVal)))
+          quotedStringVal = concat <$> ("\"" *> (sepBy (many (escapeChar stringEscape <|> (satisfy $ notInClass "\\\""))) "\\\n") <* "\"")
+          unquotedStringVal = concat <$> (sepBy (many (escapeChar stringEscape <|> (satisfy $ notInClass "\\\"\n#;"))) "\\\n")
+          toINIVal ss | len == 1 = case parseOnly ((IBool <$> (boolVal <* endOfInput)) <|> (IInt <$> (intVal <* endOfInput))) (C8.pack (strip (head ss))) of
+                                        Left _ -> IString $ C8.pack $ strip (head ss)
+                                        Right res -> res
+                      | len `mod` 2 == 0 = IString $ C8.pack (concat (lstrip (head ss): tail ss))
+                      | otherwise = IString $ C8.pack (lstrip (head ss) ++ concat (tail $ L.take (len - 1) ss) ++ rstrip (last ss))
+            where len = length ss
+                  strip = lstrip . rstrip
+                  lstrip = dropWhile (flip elem [' '])
+                  rstrip = reverse . lstrip . reverse 
+
+iniSection = foldl addINIKeyAndVal M.empty 
+            <$> many ((,) <$> (skipIgnore *> iniKey) <*> (option (IBool True) (skipSpace *> "=" *> iniValue)))
+    where addINIKeyAndVal section (key, val) = M.insert key (val:(M.findWithDefault [] key section)) section
+
+iniFile = foldl addINISection M.empty <$> (many ((,) <$> (skipIgnore *> iniSectName) <*> iniSection) <* skipIgnore <* endOfInput)
+    where addINIKeyAndVals section (key, vals) = M.insert key (vals ++ (M.findWithDefault [] key section)) section
+          addINISection iniFile (key, iniSection) = M.insert key (foldl addINIKeyAndVals (M.findWithDefault M.empty key iniFile) (M.toList iniSection)) iniFile
+
+skipIgnore = skipMany (many1 space <|> commentLine <|> many1 (char '\n'))
+    where commentLine = (char ';' <|> char '#') *> many (notChar '\n')
